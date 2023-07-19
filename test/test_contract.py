@@ -1,14 +1,6 @@
 from einsumpy.contract import *
 
 
-def test_explicit_subscript():
-    assert LatexTools.make_subscripts_explicit("x_i") == "x_{i}"
-    assert LatexTools.make_subscripts_explicit("x_ij") == "x_{i}j"
-    assert LatexTools.make_subscripts_explicit("x_{ij}") == "x_{ij}"
-    assert LatexTools.make_subscripts_explicit("x_iy_i") == "x_{i}y_{i}"
-    assert LatexTools.make_subscripts_explicit("x_{ij}y_i") == "x_{ij}y_{i}"
-
-
 def test_build_contraction():
     c = Contraction("x_iy_i", x=[2], y=[2])
     assert str(c) == "x_{i}y_{i}"
@@ -39,13 +31,11 @@ def test_identity():
 
 
 def test_dot_product():
-    for n in range(1, 10):
-        c = Contraction("x_iy_i", x=[1], y=[1])
+    for n in range(10):
+        c = Contraction("x_iy_i", x=[n], y=[n])
+        assert c.free_indices == ""
         assert str(c) == "x_{i}y_{i}"
-
-        derivative_terms = list(c.derivative("x_j"))
-        assert len(derivative_terms) == 1
-        assert str(derivative_terms[0]) == "y_{j}"
+        assert str(c.derivative("x_j")) == "y_{j}"
 
 
 def test_derivative_indices_in_use():
@@ -57,13 +47,6 @@ def test_derivative_indices_in_use():
         pass
 
 
-def test_output_indices():
-    c = Contraction("x_iy_{ij}", x=[2], y=[2, 2])
-    assert c.einsum_input_indices == "i,ij"
-    assert c.einsum_output_indices == "j"
-    assert c.einsum_string == "i,ij->j"
-
-
 def test_matrix_mult():
     for n in range(1, 10):
         c = Contraction("x_{in}y_{nj}", x=[n, n], y=[n, n])
@@ -73,13 +56,11 @@ def test_matrix_mult():
         y = np.random.random((n, n))
         assert np.allclose(c.evaluate(x=x, y=y), x @ y)
 
-        d = list(c.derivative("x_{ab}"))
-        assert len(d) == 1
-        d = d[0]
+        d = c.derivative("x_{ab}")
         assert str(d) == f"I{n}" + "_{ia}y_{bj}"
-
-        assert d.einsum_output_indices == "iabj"
-        assert np.allclose(d.evaluate(y=y)[0, 0, :, :], y)
+        d_eval = d.evaluate(y=y)
+        assert d.free_indices == "iabj"
+        assert np.allclose(d_eval[0, 0, :, :], y)
 
 
 def test_dm_trace():
@@ -91,67 +72,27 @@ def test_dm_trace():
         H = np.random.random((2, nbas, nbas))
         assert np.allclose(c.evaluate(D=D, H=H), np.einsum("aij,aij", D, H))
 
-        d = list(c.derivative("D_{bnm}"))
-        assert len(d) == 1
-        d = d[0]
+        d = c.derivative("D_{bnm}")
         assert str(d) == "H_{bnm}"
 
 
-def test_latex_remove_whitespace():
-    assert LatexTools.remove_unnecessary_whitespace("x_i + y_i") == "x_i+y_i"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu x") == r"\mu x"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu  x") == r"\mu x"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu   x") == r"\mu x"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu   \nu x") == r"\mu \nu x"
-    assert LatexTools.remove_unnecessary_whitespace(r"x x") == r"xx"
-    assert LatexTools.remove_unnecessary_whitespace(r"xy x") == r"xyx"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu_ix") == r"\mu_ix"
-    assert LatexTools.remove_unnecessary_whitespace(r"\mu_i x") == r"\mu_ix"
-
-
-def test_split_terms():
-    assert list(LatexTools.split_terms("x_i + y_i")) == ["x_{i}", "+y_{i}"]
-    assert list(LatexTools.split_terms("2x_i + y_i/3 + z_{ij}")) == ["2x_{i}", "+y_{i}/3", "+z_{ij}"]
-    assert list(LatexTools.split_terms("x_i  +  0.5y_i")) == ["x_{i}", "+0.5y_{i}"]
-    assert list(LatexTools.split_terms(r"\mu_i  -\nu_i x")) == [r"\mu_{i}", r"-\nu_{i}x"]
-    assert list(LatexTools.split_terms(r"+\mu_i - x")) == [r"+\mu_{i}", "-x"]
-    assert list(LatexTools.split_terms(r"+\mu_ij - x")) == [r"+\mu_{i}j", "-x"]
-    assert list(LatexTools.split_terms(r"+2\mu_ij/3 - x")) == [r"+2\mu_{i}j/3", "-x"]
-
-
-def test_split_coefficient():
-    assert LatexTools.split_coefficient("1x") == ("1", "x")
-    assert LatexTools.split_coefficient("2x3") == ("6", "x")
-    assert LatexTools.split_coefficient("3x2/3") == ("(6/3)", "x")
-    assert LatexTools.split_coefficient("+x") == ("1", "x")
-    assert LatexTools.split_coefficient("+x/2") == ("(1/2)", "x")
-    assert LatexTools.split_coefficient("2x/3") == ("(2/3)", "x")
-    assert LatexTools.split_coefficient("+1x") == ("1", "x")
-    assert LatexTools.split_coefficient("-1x") == ("-1", "x")
-    assert LatexTools.split_coefficient("2x/3") == ("(2/3)", "x")
-    assert LatexTools.split_coefficient("2x^2/3") == ("(2/3)", "x^2")
-    assert LatexTools.split_coefficient("-2x_2/3") == ("-(2/3)", "x_2")
-    assert LatexTools.split_coefficient("+2x_2/3") == ("(2/3)", "x_2")
-    assert LatexTools.split_coefficient(r"+2.0x_2\mu /3") == ("(2.0/3)", r"x_2\mu")
-
-
 def test_composite_build():
-    c = CompositeContraction("-x_i-y_i", x=[2], y=[2])
+    c = Contraction("-x_i-y_i", x=[2], y=[2])
     assert str(c) == "-x_{i}-y_{i}"
 
-    c = CompositeContraction("x_i+y_i", x=[2], y=[2])
+    c = Contraction("x_i+y_i", x=[2], y=[2])
     assert str(c) == "x_{i}+y_{i}"
 
-    c = CompositeContraction("+x_i-y_i", x=[2], y=[2])
+    c = Contraction("+x_i-y_i", x=[2], y=[2])
     assert str(c) == "x_{i}-y_{i}"
 
-    c = CompositeContraction("2x_i/3 + y_i/3", x=[2], y=[2])
+    c = Contraction("2x_i/3 + y_i/3", x=[2], y=[2])
     assert str(c) == "(2/3)x_{i}+(1/3)y_{i}"
 
 
 def test_composite_evaluate():
     for n in range(10):
-        c = CompositeContraction("x_iy_i - x_ix_i", x=[n], y=[n])
+        c = Contraction("x_iy_i - x_ix_i", x=[n], y=[n])
         x = np.random.random(n)
         y = np.random.random(n)
         assert np.allclose(c.evaluate(x=x, y=y), np.dot(x, y) - np.dot(x, x))
@@ -159,7 +100,7 @@ def test_composite_evaluate():
 
 def test_composite_derivative():
     for n in range(10):
-        c = CompositeContraction("x_iy_i - x_ix_i", x=[n], y=[n])
+        c = Contraction("x_iy_i - x_ix_i", x=[n], y=[n])
         x = np.random.random(n)
         y = np.random.random(n)
         assert np.allclose(c.evaluate(x=x, y=y), np.dot(x, y) - np.dot(x, x))

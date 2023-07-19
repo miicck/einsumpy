@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Iterable, Tuple, List, Union
+from einsumpy import latex_tools as LatexTools
 
 
 class IndicesMismatch(Exception):
@@ -21,101 +22,21 @@ class IndicesInUse(Exception):
 Tensor = Union[np.ndarray, Iterable, int, float]
 
 
-class LatexTools:
-
-    @staticmethod
-    def standardize(latex: str) -> str:
-        return LatexTools.make_subscripts_explicit(LatexTools.remove_unnecessary_whitespace(latex))
-
-    @staticmethod
-    def make_subscripts_explicit(latex: str):
-        for i in range(len(latex) - 2, -1, -1):
-            if latex[i] == "_" and latex[i + 1] != "{":
-                latex = latex[:i + 1] + "{" + latex[i + 1] + "}" + latex[i + 2:]
-        return latex
-
-    @staticmethod
-    def remove_unnecessary_whitespace(latex: str) -> str:
-        result = ""
-        allow = False
-        for c in latex:
-            if c == "\\":
-                allow = True
-            elif c == "_":
-                allow = False
-            elif c == " ":
-                if not allow:
-                    continue
-                allow = False
-            result += c
-        return result
-
-    @staticmethod
-    def split_terms(latex: str) -> Iterable[str]:
-        latex = LatexTools.standardize(latex)
-
-        i_start = 0
-        for i in range(len(latex)):
-            if latex[i] in {"-", "+"}:
-                if i > i_start:
-                    yield latex[i_start:i]
-                i_start = i
-        yield latex[i_start:]
-
-    @staticmethod
-    def split_coefficient(latex_term: str) -> Tuple[str, str]:
-
-        coeff_chars = set("+-0123456789./")
-
-        def is_main_bit(i):
-            if latex_term[i] not in coeff_chars:
-                return True
-            if i > 0 and latex_term[i - 1] in {"_", "^"}:
-                return True
-            return False
-
-        for i_pre in range(len(latex_term)):
-            if is_main_bit(i_pre):
-                break
-
-        for i_post in range(len(latex_term) - 1, -1, -1):
-            if is_main_bit(i_post):
-                i_post += 1
-                break
-
-        # Identify coefficient prefactor
-        pre = latex_term[:i_pre]
-        if len(pre) == 0 or pre in {"+", "-"}:
-            pre = pre + "1"
-
-        # Identify coefficient postfactor
-        post = latex_term[i_post:]
-        if post.startswith("/") or len(post) == 0:
-            post = "1" + post
-
-        # Evaluate product of pre and post apart from divisions
-        to_eval = pre + "*" + post
-        coeff = "/".join(str(eval(x)) for x in to_eval.split("/"))
-
-        # Parenthesize division
-        if "/" in coeff:
-            if coeff[0] in {"-", "+"}:
-                coeff = coeff[0] + "(" + coeff[1:] + ")"
-            else:
-                coeff = "(" + coeff + ")"
-
-        main_bit = latex_term[i_pre:i_post]
-        return coeff.strip(), main_bit.strip()
-
-
-class Contraction:
+class _SingleContraction:
 
     def __init__(self, latex: str, **shapes: Iterable[int]):
-        self._tensors, self._indices = Contraction.latex_to_tensors_indices(latex)
+        self._tensors, self._indices = _SingleContraction.latex_to_tensors_indices(latex)
 
         for t in self._tensors:
-            if t not in shapes:
-                raise IndicesMismatch(f"No shape provided for tensor: {t}")
+            if t in shapes:
+                continue
+
+            if t.startswith("I"):
+                size = int(t[1:])
+                shapes[t] = (size, size)
+                continue
+
+            raise IndicesMismatch(f"No shape provided for tensor: {t}")
 
         self._shapes = [list(shapes[t]) for t in self._tensors]
         self._path = np.einsum_path(self.einsum_string, *[np.ones(s) for s in self._shapes], optimize='optimal')
@@ -126,7 +47,7 @@ class Contraction:
         einsum_tensors = []
         for i, t, s in zip(self._indices, self._tensors, self._shapes):
             if t in tensors:
-                einsum_tensors.append(Contraction.to_numpy(tensors[t], len(i)))
+                einsum_tensors.append(_SingleContraction.to_numpy(tensors[t], len(i)))
             elif t.startswith("I"):
                 einsum_tensors.append(np.identity(int(t[1:])))
             else:
@@ -135,7 +56,7 @@ class Contraction:
         # Perform contraction
         return np.einsum(self.einsum_string, *einsum_tensors, optimize=self._path[0])
 
-    def derivative(self, tensor: str) -> Iterable['Contraction']:
+    def derivative(self, tensor: str) -> Iterable['_SingleContraction']:
 
         tensor, indices = tensor.split("_")
         indices = indices.replace("}", "").replace("{", "")
@@ -175,15 +96,15 @@ class Contraction:
                     term_indices.insert(i, a + b)
                     term_shapes.insert(i, [size, size])
 
-            yield Contraction(Contraction.to_latex(term_tensors, term_indices),
-                              **{t: s for t, s in zip(term_tensors, term_shapes)})
+            yield _SingleContraction(_SingleContraction.to_latex(term_tensors, term_indices),
+                                     **{t: s for t, s in zip(term_tensors, term_shapes)})
 
     def __str__(self):
         return self.latex
 
     @property
     def latex(self) -> str:
-        return Contraction.to_latex(self._tensors, self._indices)
+        return _SingleContraction.to_latex(self._tensors, self._indices)
 
     @property
     def einsum_input_indices(self) -> str:
@@ -227,28 +148,33 @@ class Contraction:
         return [s[0].strip() for s in split], [s[1].strip() for s in split]
 
 
-class CompositeContraction:
+class Contraction:
 
     def __init__(self, latex: str, **shapes: Iterable[int]):
         split = [LatexTools.split_coefficient(t) for t in LatexTools.split_terms(latex)]
         terms = [c[1] for c in split]
         self._coefficients = [c[0] for c in split]
         self._shapes = {x: shapes[x] for x in shapes}
-        self._contractions = [Contraction(t, **self._shapes) for t in terms]
+        self._contractions = [_SingleContraction(t, **self._shapes) for t in terms]
 
     def evaluate(self, **tensors: Tensor) -> np.ndarray:
         return sum(eval(coeff) * contr.evaluate(**tensors) for
                    coeff, contr in zip(self._coefficients, self._contractions))
 
-    def derivative(self, tensor: str) -> 'CompositeContraction':
+    def derivative(self, tensor: str) -> 'Contraction':
         latex = ""
         for coeff, contr in zip(self._coefficients, self._contractions):
             for t in contr.derivative(tensor):
                 latex += coeff + t.latex
-        return CompositeContraction(latex, **self._shapes)
+        return Contraction(latex, **self._shapes)
 
     def __str__(self):
         return self.latex
+
+    @property
+    def free_indices(self) -> str:
+        for c in self._contractions:
+            return c.einsum_output_indices
 
     @property
     def latex(self) -> str:
