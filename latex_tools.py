@@ -31,44 +31,105 @@ def remove_unnecessary_whitespace(latex: str) -> str:
 def split_terms(latex: str) -> Iterable[str]:
     latex = standardize(latex)
 
+    def remove_first_plus(term):
+        if remove_first_plus.first:
+            remove_first_plus.first = False
+            if term[0] == "+":
+                return term[1:]
+        return term
+
+    remove_first_plus.first = True
+
     i_start = 0
     for i in range(len(latex)):
-        if latex[i] in {"-", "+"}:
+        if latex[i] in {"-", "+"} and (i == 0 or latex[i - 1] != "("):
             if i > i_start:
-                yield latex[i_start:i]
+                yield remove_first_plus(latex[i_start:i])
             i_start = i
-    yield latex[i_start:]
+
+    yield remove_first_plus(latex[i_start:])
 
 
 def split_parenthetical_factors(latex: str) -> Iterable[str]:
     def split_single(l: str) -> Tuple[str, str]:
+
+        if l[0] != "(":
+
+            # Find first (
+            i = l.find("(")
+            if i == -1:
+                # No ( => all one term
+                return l, None
+
+            # Ensure first term is bracketed
+            l = "(" + l[:i] + ")" + l[i:]
+
+        # Find first matching pair of ( )
         for i in range(len(l)):
 
             if l[i] in {"+", "-"}:
-                return None
+                return latex, None  # Seperate terms before ( => not a produce
 
             if l[i] == "(":
-                depth = 0
+                depth = 1
                 for j in range(i + 1, len(l)):
                     if l[j] == "(":
                         depth += 1
-                    if l[j] == ")":
-                        if depth == 0:
-                            return l[i + 1:j], l[:i] + l[j:]
+                    elif l[j] == ")":
                         depth -= 1
-        return None
+                        if depth == 0:
+                            return l[i + 1: j], l[:i] + l[j + 1:]
 
+        raise Exception(f"Could not split a parenthetical factor from {l}")
+
+    remaining_latex = standardize(latex)
     while True:
-        split = split_single(latex)
-        if split is None:
+        factor, remaining_latex = split_single(remaining_latex)
+
+        while factor.startswith("(") and factor.endswith(")"):
+            factor = factor[1:-1]
+
+        yield factor
+        if remaining_latex is None or len(remaining_latex) == 0:
             return
 
-        yield split[0]
-        latex = split[1]
+
+def simplify_constant(latex_constant: str, max_float_digits=10):
+    terms = list(split_terms(latex_constant))
+    if len(terms) > 1:
+        raise NotImplementedError(terms)
+
+    factors = list(split_parenthetical_factors(latex_constant))
+
+    if "." in latex_constant:
+        f = float(eval("*".join(factors)))
+        return str(round(f, max_float_digits))
+
+    numerators = []
+    denominators = []
+    for f in split_parenthetical_factors(latex_constant):
+        s = f.split("/")
+        numerators.append(s[0])
+        denominators.extend(s[1:])
+
+    numerator = str(eval("*".join(numerators)))
+    if len(denominators) == 0:
+        return numerator
+
+    denominator = str(eval("*".join(denominators)))
+    return f"{numerator}/{denominator}"
 
 
 def split_coefficient(latex_term: str) -> Tuple[str, str]:
-    coeff_chars = set("+-0123456789./")
+    # Ensure the input is considered a single term
+    terms = list(split_terms(latex_term))
+    if len(terms) > 1:
+        raise Exception("Split coefficient only works with a single term!\n"
+                        f"The expression: {latex_term}\n"
+                        f"Yields the terms: {terms}")
+    latex_term = terms[0]
+
+    coeff_chars = set("+-0123456789./()")
 
     def is_main_bit(i):
         if latex_term[i] not in coeff_chars:
@@ -96,9 +157,8 @@ def split_coefficient(latex_term: str) -> Tuple[str, str]:
     if post.startswith("/") or len(post) == 0:
         post = "1" + post
 
-    # Evaluate product of pre and post apart from divisions
-    to_eval = pre + "*" + post
-    coeff = "/".join(str(eval(x)) for x in to_eval.split("/"))
+    # Simplify the combined pre*post coeffficient
+    coeff = simplify_constant(f"({pre})({post})")
 
     # Parenthesize division
     if "/" in coeff:

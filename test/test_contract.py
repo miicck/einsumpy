@@ -89,6 +89,12 @@ def test_composite_build():
     c = Contraction("2x_i/3 + y_i/3", x=[2], y=[2])
     assert str(c) == "(2/3)x_{i}+(1/3)y_{i}"
 
+    c = Contraction("2x_i/3 + y_i/3/3", x=[2], y=[2])
+    assert str(c) == "(2/3)x_{i}+(1/9)y_{i}"
+
+    c = Contraction("2x_i/3 + (1/3)y_i/3/3", x=[2], y=[2])
+    assert str(c) == "(2/3)x_{i}+(1/27)y_{i}"
+
 
 def test_composite_evaluate():
     for n in range(10):
