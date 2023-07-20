@@ -9,6 +9,10 @@ class LatexError(Exception):
     pass
 
 
+class IndexClash(Exception):
+    pass
+
+
 def remove_floating_point_trailing_zeros(s: str) -> str:
     digits = set("0123456789")
 
@@ -115,9 +119,17 @@ def to_contractions_and_coefficients(latex: str) -> Dict[str, str]:
     def to_tensor_str(s: Expr):
         s = custom_print(s)
         s = s.replace("*", "")
-        for t in placeholder_to_tensors:
-            s = s.replace(t, placeholder_to_tensors[t])
-        return s
+
+        # Replace placeholder variables with their
+        # corresponding tensors (must be done in one
+        # go to avoid replacing parts of tensors
+        # already inserted)
+        # e.g. "ab" with a -> T_{b} b -> T_{c}
+        # should not replace the T_{b} with T_{T_{c}}
+        return "".join(placeholder_to_tensors[c]
+                       if c in placeholder_to_tensors
+                       else c
+                       for c in s)
 
     # Convert a sympy expression representing
     # a coefficient into a latex string
@@ -125,6 +137,30 @@ def to_contractions_and_coefficients(latex: str) -> Dict[str, str]:
         return remove_floating_point_trailing_zeros(str(s))
 
     return {to_tensor_str(s): to_coeff_str(dict[s]) for s in dict}
+
+
+def coefficient_to_string(c: str, first_in_expression: bool = False) -> str:
+    c = parse_expr(c)
+    c_str = str(c)
+
+    # Remove information about sign
+    if c_str[0] in {"-", "+"}:
+        c_str = c_str[1:]
+
+    # A coefficient of 1 is just left blank
+    if c_str == "1":
+        c_str = ""
+
+    # Put () around divisions
+    if "/" in c_str:
+        c_str = f"({c_str})"
+
+    # First coefficient doesn't need a + in front of it
+    if first_in_expression:
+        return f"-{c_str}" if c < 0 else c_str
+
+    # Re-sign the coefficient
+    return f"-{c_str}" if c < 0 else f"+{c_str}"
 
 
 def tensor_to_kernel_indices(tensor: str) -> Tuple[str, str]:
@@ -143,14 +179,24 @@ class Contraction:
 
     def evaluate(self, **tensors: np.ndarray):
         result = None
-        for t in self._terms:
+        for term in self._terms:
             # Get the operands for this term, and their indices
-            kernels_indices = [tensor_to_kernel_indices(t) for t in identify_tensors(t)]
+            kernels_indices = [tensor_to_kernel_indices(t) for t in identify_tensors(term)]
             einsum_indices = ",".join(t[1] for t in kernels_indices)
             tensor_values = [tensors[t[0]] for t in kernels_indices]
 
+            # Work out output indices
+            output_indices = einsum_indices.replace(",", "")
+            index_count = {i: sum(j == i for j in output_indices) for i in output_indices}
+            for i in index_count:
+                if index_count[i] > 1:
+                    # Remove dummy indices from output
+                    output_indices = output_indices.replace(i, "")
+
+            einsum_string = einsum_indices + "->" + output_indices
+
             # Evaluate this term
-            t_res = eval(self._terms[t]) * np.einsum(einsum_indices, *tensor_values)
+            t_res = eval(self._terms[term]) * np.einsum(einsum_string, *tensor_values)
 
             # Add this term to the overall result
             if result is None:
@@ -160,27 +206,73 @@ class Contraction:
 
         return result
 
+    def derivative(self, tensor: str) -> 'Contraction':
+        target_kernel, target_indices = tensor_to_kernel_indices(tensor)
+
+        # Will contain a latex string representing the result
+        result_str = ""
+
+        for term in self._terms:
+            kernels_indices = [tensor_to_kernel_indices(t) for t in identify_tensors(term)]
+
+            # Find occurances of the target kernel in the contraction
+            for i, (kernel, indices) in enumerate(kernels_indices):
+
+                # Check for a clash of indices in the derivative/contraction
+                index_clash = set(target_indices).intersection(set(indices))
+                if len(index_clash) > 0:
+
+                    ic_format = ", ".join(str(j) for j in index_clash)
+                    ic_format = f"The indices {{{ic_format}}} appear"
+                    if len(index_clash) == 1:
+                        ic_format = f"The index {list(index_clash)[0]} appears"
+
+                    ic_hint = "please choose different indices for your derivative"
+                    if len(index_clash) == 1:
+                        ic_hint = "please choose a different index for your derivative"
+
+                    raise IndexClash(f"{ic_format} in both '{self}' "
+                                     f"and d/d{target_kernel}_{{{target_indices}}}, "
+                                     f"{ic_hint}.")
+
+                if kernel != target_kernel:
+                    continue
+
+                # Map the indices from this kernel onto those in the target
+                index_map = {index: index_t for index, index_t in zip(indices, target_indices)}
+
+                # Get the other terms remaining after this term has been reduced by the derivative
+                other_terms = [list(kernels_indices[j]) for j in range(len(kernels_indices)) if j != i]
+                kronecker_additions = []
+
+                for index in index_map:
+
+                    # Check for occurance of the index we're replacing
+                    # and replace it with the index of the differential
+                    replaced = False
+                    for j, (ok, oi) in enumerate(other_terms):
+                        if index in oi:
+                            # Replace the index
+                            other_terms[j][1] = oi.replace(index, index_map[index])
+                            replaced = True
+
+                    # No replacement was possible, insert an explicit Kronecker delta
+                    if not replaced:
+                        kronecker_additions.append(["I", index + index_map[index]])
+
+                # Insert the kronecker additions where the x would have been
+                # done after the above loop to preserve order of indices
+                # e.g. dx_{ij}/dx_{ab} -> I_{ia}I_{jb} rather than I_{jb}I_{ia}
+                other_terms[i:i] = kronecker_additions
+
+                contraction_string = "".join(f"{ok}_{{{oi}}}" for ok, oi in other_terms)
+
+                # Add this contribution to the result string
+                result_str += coefficient_to_string(self._terms[term]) + contraction_string
+
+        # Parse result string into a contraction object
+        return Contraction(result_str)
+
     def __str__(self):
-
-        def print_coeff(c: str):
-            c = parse_expr(c)
-            c_str = str(c)
-
-            if c_str[0] in {"-", "+"}:
-                c_str = c_str[1:]
-
-            if c_str == "1":
-                c_str = ""
-
-            if "/" in c_str:
-                c_str = f"({c_str})"
-
-            if print_coeff.first:
-                print_coeff.first = False
-                return f"-{c_str}" if c < 0 else c_str
-
-            return f"-{c_str}" if c < 0 else f"+{c_str}"
-
-        print_coeff.first = True
-
-        return "".join(print_coeff(self._terms[t]) + t for t in self._terms)
+        return "".join(coefficient_to_string(self._terms[t], first_in_expression=i == 0) + t
+                       for i, t in enumerate(self._terms))
