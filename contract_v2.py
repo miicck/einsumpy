@@ -1,4 +1,4 @@
-from typing import Iterable, Tuple, List, Dict
+from typing import Iterable, Tuple, List, Dict, Set
 from sympy.simplify import simplify
 from sympy.parsing import parse_expr
 from sympy import Expr
@@ -10,7 +10,20 @@ class LatexError(Exception):
 
 
 class IndexClash(Exception):
-    pass
+
+    @staticmethod
+    def from_set_and_expressions(clash: Set[str], expr_1: str, expr_2: str):
+
+        clash_format = ", ".join(str(j) for j in clash)
+        clash_format = f"The indices {{{clash_format}}} appear"
+        if len(clash) == 1:
+            clash_format = f"The index {list(clash)[0]} appears"
+
+        clash_hint = "please choose non-clashing indices"
+        if len(clash) == 1:
+            clash_hint = "please choose a non-clashing index"
+
+        return IndexClash(f"{clash_format} in both '{expr_1}' and '{expr_2}', {clash_hint}.")
 
 
 def remove_floating_point_trailing_zeros(s: str) -> str:
@@ -207,34 +220,31 @@ class Contraction:
         return result
 
     def derivative(self, tensor: str) -> 'Contraction':
+
+        # d/dX_{ij} => target_kernel = x, target_indices = ij
         target_kernel, target_indices = tensor_to_kernel_indices(tensor)
 
         # Will contain a latex string representing the result
         result_str = ""
 
+        # Check for a clash between indicies in derivative
+        # and indicies in this expression
         for term in self._terms:
+            for t in identify_tensors(term):
+                clash = set(target_indices).intersection(set(tensor_to_kernel_indices(t)[1]))
+                if len(clash) > 0:
+                    raise IndexClash.from_set_and_expressions(
+                        clash, str(self), f"d/d{target_kernel}_{{{target_indices}}}")
+
+        # Take derivative of each term, sum the result
+        for term in self._terms:
+
+            # Get kernels and indices of this term
+            # A_{ij}B_{ij} kernels = A, B indices = ij, ij
             kernels_indices = [tensor_to_kernel_indices(t) for t in identify_tensors(term)]
 
             # Find occurances of the target kernel in the contraction
             for i, (kernel, indices) in enumerate(kernels_indices):
-
-                # Check for a clash of indices in the derivative/contraction
-                index_clash = set(target_indices).intersection(set(indices))
-                if len(index_clash) > 0:
-
-                    ic_format = ", ".join(str(j) for j in index_clash)
-                    ic_format = f"The indices {{{ic_format}}} appear"
-                    if len(index_clash) == 1:
-                        ic_format = f"The index {list(index_clash)[0]} appears"
-
-                    ic_hint = "please choose different indices for your derivative"
-                    if len(index_clash) == 1:
-                        ic_hint = "please choose a different index for your derivative"
-
-                    raise IndexClash(f"{ic_format} in both '{self}' "
-                                     f"and d/d{target_kernel}_{{{target_indices}}}, "
-                                     f"{ic_hint}.")
-
                 if kernel != target_kernel:
                     continue
 
