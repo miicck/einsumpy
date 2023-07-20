@@ -162,10 +162,17 @@ class Contraction:
                    coeff, contr in zip(self._coefficients, self._contractions))
 
     def derivative(self, tensor: str) -> 'Contraction':
-        latex = ""
+
+        term_coeffs = {}
         for coeff, contr in zip(self._coefficients, self._contractions):
             for t in contr.derivative(tensor):
-                latex += coeff + t.latex
+                if t.latex not in term_coeffs:
+                    term_coeffs[t.latex] = []
+                term_coeffs[t.latex].append(coeff)
+
+        latex = "+".join(LatexTools.sum_coefficients(term_coeffs[t]) + t for t in term_coeffs)
+        print(latex)
+
         return Contraction(latex, **self._shapes)
 
     def __str__(self):

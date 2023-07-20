@@ -169,3 +169,18 @@ def split_coefficient(latex_term: str) -> Tuple[str, str]:
 
     main_bit = latex_term[i_pre:i_post]
     return coeff.strip(), main_bit.strip()
+
+
+def sum_coefficients(coeffs: Iterable[str]) -> str:
+    result = ""
+    for i, c in enumerate(coeffs):
+        c = standardize(c)
+        if c[0] in {"+", "-"} or i == 0:
+            result += c
+        else:
+            result += f"+{c}"
+
+    if i > 0:
+        result = "(" + result + ")"
+
+    return result
