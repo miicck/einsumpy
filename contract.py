@@ -23,6 +23,10 @@ class IndexClash(Exception):
         return IndexClash(f"{clash_format} in both '{expr_1}' and '{expr_2}', {clash_hint}.")
 
 
+class IndexMismatch(Exception):
+    pass
+
+
 class TooManyIndices(Exception):
     pass
 
@@ -90,16 +94,7 @@ class Contraction:
                                parsing.identify_tensors(term)]
             einsum_indices = ",".join(t[1] for t in kernels_indices)
             tensor_values = [get_tensor(t[0]) for t in kernels_indices]
-
-            # Work out output indices
-            output_indices = einsum_indices.replace(",", "")
-            index_count = {i: sum(j == i for j in output_indices) for i in output_indices}
-            for i in index_count:
-                if index_count[i] > 1:
-                    # Remove dummy indices from output
-                    output_indices = output_indices.replace(i, "")
-
-            einsum_string = einsum_indices + "->" + output_indices
+            einsum_string = einsum_indices + "->" + self.free_indices
 
             # Evaluate this term
             t_res = eval(self._terms[term]) * np.einsum(einsum_string, *tensor_values)
@@ -201,6 +196,29 @@ class Contraction:
             for tensor in parsing.identify_tensors(term):
                 kernel, indices = parsing.tensor_to_kernel_indices(tensor)
                 result.update(indices)
+
+        return result
+
+    @property
+    def free_indices(self) -> str:
+
+        result = None
+
+        for term in self._terms:
+            term_indices = ""
+            for tensor in parsing.identify_tensors(term):
+                kernel, indices = parsing.tensor_to_kernel_indices(tensor)
+                term_indices += indices
+
+            term_indices_counts = {i: sum(j == i for j in term_indices) for i in term_indices}
+            term_indices = "".join(i for i in term_indices_counts if term_indices_counts[i] == 1)
+
+            if result == None:
+                result = term_indices
+            else:
+                if result != term_indices:
+                    raise IndexMismatch(f"Free indices on term '{term}' not equal to "
+                                        f"those on previous terms in contraction '{self}'")
 
         return result
 

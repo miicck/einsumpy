@@ -41,3 +41,12 @@ def test_minimize_random_quadratic(dimension=1, check_result=True):
 def test_minimize_random_quadratics(max_dimension=10):
     for n in range(1, max_dimension):
         test_minimize_random_quadratic(n)
+
+
+def test_minimize_fail_free_indices():
+    c = Contraction("x_i", x=[2])
+    try:
+        minimize(c, "x", x=np.ones(2))
+        assert False
+    except TooManyIndices:
+        pass

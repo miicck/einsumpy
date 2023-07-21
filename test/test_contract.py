@@ -30,6 +30,25 @@ def test_suggest_indices_fail():
         pass
 
 
+def test_free_indices():
+    c = Contraction("x_{in}y_{nj}", x=[2, 2], y=[2, 2])
+    assert c.free_indices == "ij"
+
+
+def test_free_indices_2():
+    c = Contraction("x_{in}y_{nj} + z_{in}y_{nm}x_{mj}", x=[2, 2], y=[2, 2], z=[2, 2])
+    assert c.free_indices == "ij"
+
+
+def test_free_indices_fail():
+    c = Contraction("x_{in}y_{nj} + x_{an}y_{nb}", x=[2, 2], y=[2, 2])
+    try:
+        fi = c.free_indices
+        assert False
+    except IndexMismatch:
+        pass
+
+
 def test_dot_products():
     for n in range(10):
         c = Contraction("x_ix_i + x_ix_i - y_ix_i", x=[n], y=[n])
