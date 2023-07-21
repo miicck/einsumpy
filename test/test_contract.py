@@ -78,6 +78,11 @@ def test_density_matrix_energy():
                            np.einsum("aij,aijbnm,bnm", D, B, D))
 
 
+def test_free_index_simplification():
+    c = Contraction("x_{i}y_{i} + x_{j}y_{j}", x=[2], y=[2])
+    assert str(c) == "2x_{i}y_{i}"
+
+
 def test_missing_shape():
     try:
         c = Contraction("x_i")
@@ -189,6 +194,15 @@ def test_derivative_7():
 
         d = c.derivative("d_{ab}")
         assert str(d) == "A_{ab}-L_{ab}+B_{abnm}D_{nm}+D_{nm}B_{nmab}+L_{aj}D_{bj}+L_{ib}D_{ia}"
+
+
+def test_derivative_8():
+    for n in range(10):
+        c = Contraction("(d_{in}D_{nj} + D_{in}d_{nj} + d_{ij})"
+                        "(d_{im}D_{mj} + D_{im}d_{mj} + d_{ij}) + 4d_{ij}G_{ij}",
+                        d=[n, n], D=[n, n], G=[n, n])
+        d = c.derivative("d_{ab}")
+        # TODO: actually test result
 
 
 def test_evaluate_derivative():
