@@ -30,6 +30,14 @@ class UnkownTensor(Exception):
     pass
 
 
+class MissingShape(Exception):
+    pass
+
+
+class WrongShape(Exception):
+    pass
+
+
 def remove_floating_point_trailing_zeros(s: str) -> str:
     digits = set("0123456789")
 
@@ -202,7 +210,18 @@ class Contraction:
 
     def __init__(self, latex: str, **shapes: Iterable[int]):
         self._terms = to_contractions_and_coefficients(latex)
-        self._shapes = shapes
+        self._shapes = {s: list(shapes[s]) for s in shapes}
+
+        for term in self._terms:
+            for tensor in identify_tensors(term):
+                kernel, indices = tensor_to_kernel_indices(tensor)
+                if kernel not in self._shapes:
+                    raise MissingShape(f"Shape not specified for the tensor '{kernel}'")
+
+                shape = self._shapes[kernel]
+                if len(shape) != len(indices):
+                    raise WrongShape(f"Shape {shape} specified for tensor '{tensor}' "
+                                     f"incompatible with indices '{indices}'")
 
     def evaluate(self, **tensors: np.ndarray):
 

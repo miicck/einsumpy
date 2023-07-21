@@ -48,17 +48,17 @@ def test_tensor_to_kernel_indices():
 
 
 def test_contraction_name():
-    assert str(Contraction("x_ix_i")) == "x_ix_i"
-    assert str(Contraction("x_ix_i+y_iy_i")) == "x_ix_i+y_iy_i"
-    assert str(Contraction("x_ix_i-y_iy_i")) == "x_ix_i-y_iy_i"
-    assert str(Contraction("-x_ix_i-y_iy_i")) == "-x_ix_i-y_iy_i"
-    assert str(Contraction("-3x_ix_i/2")) == "-(3/2)x_ix_i"
-    assert str(Contraction("-3x_ix_i/2/3")) == "-(1/2)x_ix_i"
+    assert str(Contraction("x_ix_i", x=[2])) == "x_ix_i"
+    assert str(Contraction("x_ix_i+y_iy_i", x=[2], y=[2])) == "x_ix_i+y_iy_i"
+    assert str(Contraction("x_ix_i-y_iy_i", x=[2], y=[2])) == "x_ix_i-y_iy_i"
+    assert str(Contraction("-x_ix_i-y_iy_i", x=[2], y=[2])) == "-x_ix_i-y_iy_i"
+    assert str(Contraction("-3x_ix_i/2", x=[2])) == "-(3/2)x_ix_i"
+    assert str(Contraction("-3x_ix_i/2/3", x=[2])) == "-(1/2)x_ix_i"
 
 
 def test_dot_products():
     for n in range(10):
-        c = Contraction("x_ix_i + x_ix_i - y_ix_i", x=[n])
+        c = Contraction("x_ix_i + x_ix_i - y_ix_i", x=[n], y=[n])
         assert str(c) == "2x_ix_i-x_iy_i"
         x, y = np.random.random((2, n))
         assert np.allclose(c.evaluate(x=x, y=y), 2 * np.dot(x, x) - np.dot(x, y))
@@ -142,7 +142,7 @@ def test_derivative_4():
 
 def test_derivative_5():
     for n in range(10):
-        c = Contraction("y_{ij}y_{ij}x_{ij}")
+        c = Contraction("y_{ij}y_{ij}x_{ij}", x=[n, n], y=[n, n])
         d = c.derivative("x_{nm}")
         assert str(d) == "y_{nm}y_{nm}"
 
