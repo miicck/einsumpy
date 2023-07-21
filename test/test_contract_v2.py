@@ -24,8 +24,10 @@ def test_identify_tensors():
     assert list(identify_tensors("(3/2)\\mu_i(3) + 3y_i2")) == ["\\mu_i", "y_i"]
     assert list(identify_tensors("D_{aij}A_{aij}")) == ["D_{aij}", "A_{aij}"]
     assert list(identify_tensors("I_{jb}I_{ia}y_{nm}")) == ["I_{jb}", "I_{ia}", "y_{nm}"]
-    assert list(identify_tensors("D_{aij}A_{aij})) + D_{aij}B_{aijbnm}D_{bnm}")) == \
-           ["D_{aij}", "A_{aij}", "D_{aij}", "B_{aijbnm}", "D_{bnm}"]
+    assert list(identify_tensors("I(10)_{ij}")) == ["I(10)_{ij}"]
+    assert list(identify_tensors("0.5I(10)_{ij}")) == ["I(10)_{ij}"]
+    assert list(identify_tensors("3I(10)_{ij}/2")) == ["I(10)_{ij}"]
+    assert list(identify_tensors("D_{aij}B_{aijbnm}D_{bnm}")) == ["D_{aij}", "B_{aijbnm}", "D_{bnm}"]
 
 
 def test_to_contractions_and_coefficients():
@@ -151,4 +153,32 @@ def test_derivative_6():
         x, y = np.random.random((2, n, n))
         assert np.allclose(c.evaluate(x=x, y=y), np.einsum("ij,nm->ijnm", x, y))
         d = c.derivative("x_{ab}")
-        assert str(d) == "I_{ia}I_{jb}y_{nm}"
+        assert str(d) == f"I({n})_{{ia}}I({n})_{{jb}}y_{{nm}}"
+
+
+def test_derivative_7():
+    for n in range(10):
+        c = Contraction("d_{ij}(A_{ij} + (B_{ijnm} + B_{nmij})D_{nm}) + "
+                        "L_{ij}(d_{in}D_{nj} + D_{in}d_{nj} - d_{ij})",
+                        d=[n, n], D=[n, n], A=[n, n], L=[n, n], B=[n, n, n, n])
+
+        d = c.derivative("d_{ab}")
+        assert str(d) == "A_{ab}-L_{ab}+B_{abnm}D_{nm}+D_{nm}B_{nmab}+L_{aj}D_{bj}+L_{ib}D_{ia}"
+
+
+def test_evaluate_derivative():
+    for n in range(10):
+        c = Contraction("x_iy_i", x=[n], y=[n])
+        d = c.derivative("x_j")
+        y = np.random.random(n)
+        assert np.allclose(d.evaluate(y=y), y)
+
+
+def test_evaluate_derivative_with_kronecker():
+    for n in range(10):
+        c = Contraction("x_{ij}y_{nm}", x=[n, n], y=[n, n])
+        d = c.derivative("x_{ab}")
+        assert str(d) == f"I({n})_{{ia}}I({n})_{{jb}}y_{{nm}}"
+        y = np.random.random((n, n))
+        I = np.identity(n)
+        assert np.allclose(d.evaluate(y=y), np.einsum("ia,jb,nm->iajbnm", I, I, y))

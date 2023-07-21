@@ -26,6 +26,10 @@ class IndexClash(Exception):
         return IndexClash(f"{clash_format} in both '{expr_1}' and '{expr_2}', {clash_hint}.")
 
 
+class UnkownTensor(Exception):
+    pass
+
+
 def remove_floating_point_trailing_zeros(s: str) -> str:
     digits = set("0123456789")
 
@@ -76,6 +80,16 @@ def identify_tensors(latex: str) -> Iterable[str]:
 
         # Identify start of tensor
         i_start = i - 1
+
+        # Check for bracketed kernel like I(30)
+        if latex[i_start] == ")":
+            for j in range(i_start, -1, -1):
+                if latex[j] == "(":
+                    i_start = j - 1
+                    break
+
+            if latex[i_start + 1] != "(":
+                raise LatexError(f"Unmatched ( in '{latex}'")
 
         # Check for backslash-delimited names (e.g. \mu)
         for j in range(i_start, -1, -1):
@@ -191,12 +205,27 @@ class Contraction:
         self._shapes = shapes
 
     def evaluate(self, **tensors: np.ndarray):
+
+        def get_tensor(kernel: str) -> np.ndarray:
+
+            # Check if this was an input kernel
+            if kernel in tensors:
+                return tensors[kernel]
+
+            # Check if this is a Kronecker delta
+            if kernel.startswith("I"):
+                assert kernel[-1] == ")" and kernel[1] == "(", f"Misformated identity: '{kernel}'"
+                return np.identity(int(kernel[2:-1]))
+
+            # Unkown tensor
+            raise UnkownTensor(f"The tensor '{kernel}' was not specified in {list(tensors)}")
+
         result = None
         for term in self._terms:
             # Get the operands for this term, and their indices
             kernels_indices = [tensor_to_kernel_indices(t) for t in identify_tensors(term)]
             einsum_indices = ",".join(t[1] for t in kernels_indices)
-            tensor_values = [tensors[t[0]] for t in kernels_indices]
+            tensor_values = [get_tensor(t[0]) for t in kernels_indices]
 
             # Work out output indices
             output_indices = einsum_indices.replace(",", "")
@@ -226,6 +255,7 @@ class Contraction:
 
         # Will contain a latex string representing the result
         result_str = ""
+        result_shapes = {}
 
         # Check for a clash between indicies in derivative
         # and indicies in this expression
@@ -268,20 +298,27 @@ class Contraction:
 
                     # No replacement was possible, insert an explicit Kronecker delta
                     if not replaced:
-                        kronecker_additions.append(["I", index + index_map[index]])
+                        dim = self._shapes[kernel][indices.index(index)]
+                        I_kernel = f"I({dim})"
+                        kronecker_additions.append([I_kernel, index + index_map[index]])
+                        self._shapes[I_kernel] = [dim, dim]
 
                 # Insert the kronecker additions where the x would have been
                 # done after the above loop to preserve order of indices
                 # e.g. dx_{ij}/dx_{ab} -> I_{ia}I_{jb} rather than I_{jb}I_{ia}
                 other_terms[i:i] = kronecker_additions
 
-                contraction_string = "".join(f"{ok}_{{{oi}}}" for ok, oi in other_terms)
+                # Build contraction and save shapes
+                contraction_string = ""
+                for ok, oi in other_terms:
+                    result_shapes[ok] = self._shapes[ok]
+                    contraction_string += ok + "_{" + oi + "}"
 
                 # Add this contribution to the result string
                 result_str += coefficient_to_string(self._terms[term]) + contraction_string
 
         # Parse result string into a contraction object
-        return Contraction(result_str)
+        return Contraction(result_str, **result_shapes)
 
     def __str__(self):
         return "".join(coefficient_to_string(self._terms[t], first_in_expression=i == 0) + t
