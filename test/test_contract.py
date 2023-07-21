@@ -11,6 +11,25 @@ def test_contraction_name():
     assert str(Contraction("-3x_ix_i/2/3", x=[2])) == "-(1/2)x_ix_i"
 
 
+def test_indices():
+    c = Contraction("x_{ijk}y_{ijl}D_{ijlm}", x=[2, 2, 2], y=[2, 2, 2], D=[2, 2, 2, 2])
+    assert c.all_indices == {"i", "j", "k", "l", "m"}
+
+
+def test_suggest_indices():
+    c = Contraction("x_{ab}", x=[2, 2])
+    assert c.suggest_new_indices(2) == "ij"
+
+
+def test_suggest_indices_fail():
+    c = Contraction("x_{ab}", x=[2, 2])
+    try:
+        c.suggest_new_indices(100000)
+        assert False
+    except TooManyIndices:
+        pass
+
+
 def test_dot_products():
     for n in range(10):
         c = Contraction("x_ix_i + x_ix_i - y_ix_i", x=[n], y=[n])
@@ -38,6 +57,38 @@ def test_density_matrix_energy():
         assert np.allclose(c.evaluate(D=D, A=A, B=B),
                            np.einsum("aij,aij", D, A) +
                            np.einsum("aij,aijbnm,bnm", D, B, D))
+
+
+def test_missing_shape():
+    try:
+        c = Contraction("x_i")
+        assert False
+    except MissingShape:
+        pass
+
+
+def test_missing_shape_2():
+    try:
+        c = Contraction("x_iy_i", x=[2])
+        assert False
+    except MissingShape:
+        pass
+
+
+def test_wrong_shape():
+    try:
+        c = Contraction("x_i", x=[2, 2])
+        assert False
+    except WrongShape as e:
+        pass
+
+
+def test_wrong_shape_2():
+    try:
+        c = Contraction("x_{ij}", x=[2])
+        assert False
+    except WrongShape as e:
+        pass
 
 
 def test_derivative_index_error():

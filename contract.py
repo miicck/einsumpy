@@ -23,6 +23,10 @@ class IndexClash(Exception):
         return IndexClash(f"{clash_format} in both '{expr_1}' and '{expr_2}', {clash_hint}.")
 
 
+class TooManyIndices(Exception):
+    pass
+
+
 class UnkownTensor(Exception):
     pass
 
@@ -49,8 +53,20 @@ class Contraction:
 
                 shape = self._shapes[kernel]
                 if len(shape) != len(indices):
-                    raise WrongShape(f"Shape {shape} specified for tensor '{tensor}' "
-                                     f"incompatible with indices '{indices}'")
+                    raise WrongShape(f"Shape {shape} is incompatible with the indices of '{tensor}'")
+
+    def get_shape(self, tensor: str) -> List[int]:
+
+        tensor = parsing.strip_indices(tensor)
+
+        if tensor in self._shapes:
+            return self._shapes[tensor]
+
+        if parsing.is_kronecker_symbol(tensor):
+            dim = parsing.get_kronecker_dim(tensor)
+            return [dim, dim]
+
+        raise UnkownTensor(f"Tensor '{tensor}' not found in contraction '{self}'")
 
     def evaluate(self, **tensors: np.ndarray):
 
@@ -61,9 +77,8 @@ class Contraction:
                 return tensors[kernel]
 
             # Check if this is a Kronecker delta
-            if kernel.startswith("I"):
-                assert kernel[-1] == ")" and kernel[1] == "(", f"Misformated identity: '{kernel}'"
-                return np.identity(int(kernel[2:-1]))
+            if parsing.is_kronecker_symbol(kernel):
+                return np.identity(parsing.get_kronecker_dim(kernel))
 
             # Unkown tensor
             raise UnkownTensor(f"The tensor '{kernel}' was not specified in {list(tensors)}")
@@ -99,6 +114,12 @@ class Contraction:
 
     def derivative(self, tensor: str) -> 'Contraction':
 
+        # Check if only kernel is specified, and pick indices for derivative
+        if "_" not in tensor:
+            shape = self.get_shape(tensor)
+            indices = self.suggest_new_indices(len(shape))
+            tensor += "_{" + indices + "}"
+
         # d/dX_{ij} => target_kernel = x, target_indices = ij
         target_kernel, target_indices = parsing.tensor_to_kernel_indices(tensor)
 
@@ -108,12 +129,10 @@ class Contraction:
 
         # Check for a clash between indicies in derivative
         # and indicies in this expression
-        for term in self._terms:
-            for t in parsing.identify_tensors(term):
-                clash = set(target_indices).intersection(set(parsing.tensor_to_kernel_indices(t)[1]))
-                if len(clash) > 0:
-                    raise IndexClash.from_set_and_expressions(
-                        clash, str(self), f"d/d{target_kernel}_{{{target_indices}}}")
+        clash = set(target_indices).intersection(self.all_indices)
+        if len(clash) > 0:
+            raise IndexClash.from_set_and_expressions(
+                clash, str(self), f"d/d{target_kernel}_{{{target_indices}}}")
 
         # Take derivative of each term, sum the result
         for term in self._terms:
@@ -147,10 +166,10 @@ class Contraction:
 
                     # No replacement was possible, insert an explicit Kronecker delta
                     if not replaced:
-                        dim = self._shapes[kernel][indices.index(index)]
-                        I_kernel = f"I({dim})"
+                        dim = self.get_shape(kernel)[indices.index(index)]
+                        I_kernel = parsing.get_kronecker_symbol(dim)
                         kronecker_additions.append([I_kernel, index + index_map[index]])
-                        self._shapes[I_kernel] = [dim, dim]
+                        result_shapes[I_kernel] = [dim, dim]
 
                 # Insert the kronecker additions where the x would have been
                 # done after the above loop to preserve order of indices
@@ -160,7 +179,8 @@ class Contraction:
                 # Build contraction and save shapes
                 contraction_string = ""
                 for ok, oi in other_terms:
-                    result_shapes[ok] = self._shapes[ok]
+                    if ok not in result_shapes:
+                        result_shapes[ok] = self.get_shape(ok)
                     contraction_string += ok + "_{" + oi + "}"
 
                 # Add this contribution to the result string
@@ -172,3 +192,36 @@ class Contraction:
     def __str__(self):
         return "".join(parsing.coefficient_to_string(self._terms[t], first_in_expression=i == 0) + t
                        for i, t in enumerate(self._terms))
+
+    @property
+    def all_indices(self) -> Set[str]:
+
+        result = set()
+        for term in self._terms:
+            for tensor in parsing.identify_tensors(term):
+                kernel, indices = parsing.tensor_to_kernel_indices(tensor)
+                result.update(indices)
+
+        return result
+
+    def suggest_new_indices(self, count: int) -> str:
+        possible = "ijklmnabcdefghpqrstuvw"
+        possible += possible.upper()
+
+        used = self.all_indices
+        suggestion = ""
+
+        for i in possible:
+            if len(suggestion) >= count:
+                break
+            if i in used:
+                continue
+            suggestion += i
+
+        if len(suggestion) != count:
+            raise TooManyIndices(f"Could not suggest {count} new indices from:\n"
+                                 f"{possible}\n"
+                                 f"That weren't in:\n"
+                                 f"{''.join(used)}")
+
+        return suggestion

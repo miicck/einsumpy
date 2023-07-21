@@ -5,7 +5,7 @@ from sympy import Expr
 import numpy as np
 
 
-class LatexError(Exception):
+class ParsingError(Exception):
     pass
 
 
@@ -44,7 +44,7 @@ def identify_tensors(latex: str) -> Iterable[str]:
             continue
 
         if i == len(latex) - 1:
-            raise LatexError(f"_ at end of expression: '{latex}'")
+            raise ParsingError(f"_ at end of expression: '{latex}'")
 
         # Identify end of indices
         i_end = i + 1
@@ -55,7 +55,7 @@ def identify_tensors(latex: str) -> Iterable[str]:
                     i_end = j
                     break
             if i_end == i + 1:
-                raise LatexError(f"Unmatched {{ in expression: '{latex}'")
+                raise ParsingError(f"Unmatched {{ in expression: '{latex}'")
 
         # Identify start of tensor
         i_start = i - 1
@@ -68,7 +68,7 @@ def identify_tensors(latex: str) -> Iterable[str]:
                     break
 
             if latex[i_start + 1] != "(":
-                raise LatexError(f"Unmatched ( in '{latex}'")
+                raise ParsingError(f"Unmatched ( in '{latex}'")
 
         # Check for backslash-delimited names (e.g. \mu)
         for j in range(i_start, -1, -1):
@@ -172,6 +172,34 @@ def coefficient_to_string(c: str, first_in_expression: bool = False) -> str:
 def tensor_to_kernel_indices(tensor: str) -> Tuple[str, str]:
     i = tensor.find("_")
     if i < 0:
-        raise LatexError(f"Tensor '{tensor}' does not have a subscript!")
+        raise ParsingError(f"Tensor '{tensor}' does not have a subscript!")
 
     return tensor[:i], tensor[i + 1:].replace("{", "").replace("}", "")
+
+
+def strip_indices(tensor: str) -> str:
+    if "_" not in tensor:
+        return tensor
+    return tensor.split("_")[0]
+
+
+def is_kronecker_symbol(kernel: str) -> bool:
+    return kernel[0] == "I" and kernel[1] == "(" and kernel[-1] == ")"
+
+
+def get_kronecker_symbol(dim: int) -> str:
+    return f"I({dim})"
+
+
+def get_kronecker_dim(symbol: str) -> int:
+    if not symbol[0] == "I":
+        raise ParsingError(f"Kronecker tensor '{symbol}' does not start with 'I'")
+    if not symbol[1] == "(":
+        raise ParsingError(f"Missing ( in Kronecker tensor '{symbol}'")
+    if not symbol[-1] == ")":
+        raise ParsingError(f"Missing ) in Kronecker tensor '{symbol}'")
+
+    try:
+        return int(symbol[2:-1])
+    except ValueError:
+        raise ParsingError(f"Could not parse dimension from Kronecker tensor '{symbol}'")
